@@ -1,0 +1,31 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # Telegram
+    bot_token: str
+
+    # Anthropic
+    anthropic_api_key: str
+
+    # Firecrawl
+    firecrawl_api_key: str
+
+    # PostgreSQL
+    database_url: str
+
+    # Redis
+    redis_url: str
+
+    # Qdrant
+    qdrant_host: str = "localhost"
+    qdrant_port: int = 6333
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+settings = Settings()
