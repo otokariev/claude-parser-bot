@@ -16,6 +16,8 @@ from bot.keyboards import (
 )
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 
+from services.scraper import scrape_url
+
 logger = logging.getLogger(__name__)
 
 # Router instance for registering handlers
@@ -188,7 +190,7 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_url)
 async def handle_url_input(message: Message, state: FSMContext) -> None:
-    """Handle URL input from user — validate and save to state."""
+    """Handle URL input from user — validate, scrape and save to state."""
     url = message.text.strip()
 
     # Basic URL validation
@@ -199,12 +201,31 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Save URL to FSM state
-    await state.update_data(current_url=url)
+    # Notify user that scraping has started
+    status_message = await message.answer("⏳ Scraping the site, please wait...")
+
+    # Scrape the URL
+    result = scrape_url(url)
+
+    if not result.success:
+        await status_message.edit_text(
+            f"❌ Failed to scrape <code>{url}</code>\n\n"
+            f"Error: {result.error}",
+        )
+        return
+
+    # Save URL and content to FSM state
+    await state.update_data(
+        current_url=url,
+        current_title=result.title,
+        current_content=result.content,
+    )
     await state.set_state(BotStates.waiting_for_question)
 
-    await message.answer(
-        f"✅ URL saved: <code>{url}</code>\n\n"
+    await status_message.edit_text(
+        f"✅ Site scraped successfully!\n\n"
+        f"🌐 <b>{result.title or url}</b>\n"
+        f"📄 Content length: {len(result.content)} chars\n\n"
         "Now send me your question about this site!",
     )
 
