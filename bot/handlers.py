@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from bot.config import settings
 from bot.keyboards import (
     back_keyboard,
     confirm_keyboard,
@@ -13,6 +14,7 @@ from bot.keyboards import (
     site_actions_keyboard,
     sites_keyboard,
 )
+from db.repository import authorize_user, get_or_create_user, is_user_authorized
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +25,44 @@ router = Router()
 class BotStates(StatesGroup):
     """FSM states for conversation flow."""
 
-    waiting_for_url = State()        # waiting for user to send a URL
-    waiting_for_question = State()   # waiting for user to send a question
+    waiting_for_password = State()       # waiting for user to enter password
+    waiting_for_url = State()            # waiting for user to send a URL
+    waiting_for_question = State()       # waiting for user to send a question
     waiting_for_clarification = State()  # waiting for clarification from user
+
+
+# ── Authorization middleware ──────────────────────────────────────────────────
+
+async def check_authorization(message: Message, state: FSMContext) -> bool:
+    """Check if user is authorized. If not — ask for password. Returns True if authorized."""
+    user_id = message.from_user.id
+    authorized = await is_user_authorized(user_id)
+
+    if not authorized:
+        await state.set_state(BotStates.waiting_for_password)
+        await message.answer(
+            "🔒 This bot is password protected.\n\n"
+            "Please enter the password to continue:",
+        )
+        return False
+    return True
 
 
 # ── Command Handlers ──────────────────────────────────────────────────────────
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext) -> None:
-    """Handle /start command — greet user and show main menu."""
+    """Handle /start command — register user and check authorization."""
+    await get_or_create_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    authorized = await check_authorization(message, state)
+    if not authorized:
+        return
+
     await state.clear()
     await message.answer(
         f"👋 Hello, <b>{message.from_user.full_name}</b>!\n\n"
@@ -49,8 +79,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("help"))
 @router.message(F.text == "ℹ️ Help")
-async def cmd_help(message: Message) -> None:
+async def cmd_help(message: Message, state: FSMContext) -> None:
     """Handle /help command — show usage instructions."""
+    if not await check_authorization(message, state):
+        return
+
     await message.answer(
         "ℹ️ <b>How Claude Parser Bot works:</b>\n\n"
         "🌐 <b>Add URL</b> — add a website to parse\n"
@@ -65,11 +98,33 @@ async def cmd_help(message: Message) -> None:
     )
 
 
+# ── Password Handler ──────────────────────────────────────────────────────────
+
+@router.message(BotStates.waiting_for_password)
+async def handle_password(message: Message, state: FSMContext) -> None:
+    """Handle password input — authorize user if correct."""
+    if message.text.strip() == settings.bot_password:
+        await authorize_user(message.from_user.id)
+        await state.clear()
+        await message.answer(
+            "✅ Password correct! Welcome!\n\n"
+            f"👋 Hello, <b>{message.from_user.full_name}</b>!",
+            reply_markup=main_menu_keyboard(),
+        )
+    else:
+        await message.answer(
+            "❌ Wrong password. Please try again:",
+        )
+
+
 # ── Menu Button Handlers ──────────────────────────────────────────────────────
 
 @router.message(F.text == "🌐 Add URL")
 async def handle_add_url(message: Message, state: FSMContext) -> None:
     """Handle Add URL button — ask user for a URL."""
+    if not await check_authorization(message, state):
+        return
+
     await state.set_state(BotStates.waiting_for_url)
     await message.answer(
         "🌐 Send me a website URL to parse.\n\n"
@@ -78,9 +133,12 @@ async def handle_add_url(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == "📋 My Sites")
-async def handle_my_sites(message: Message) -> None:
+async def handle_my_sites(message: Message, state: FSMContext) -> None:
     """Handle My Sites button — show saved sites (placeholder)."""
-    # TODO: load sites from database in Step 11
+    if not await check_authorization(message, state):
+        return
+
+    # TODO: load sites from database in Step 12
     await message.answer(
         "📋 <b>Your saved sites:</b>\n\n"
         "No sites saved yet. Press <b>Add URL</b> to add one!",
@@ -90,6 +148,9 @@ async def handle_my_sites(message: Message) -> None:
 @router.message(F.text == "❓ Ask Question")
 async def handle_ask_question(message: Message, state: FSMContext) -> None:
     """Handle Ask Question button — ask user for a question."""
+    if not await check_authorization(message, state):
+        return
+
     await state.set_state(BotStates.waiting_for_question)
     await message.answer(
         "❓ What would you like to know?\n\n"
@@ -98,9 +159,12 @@ async def handle_ask_question(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == "📜 History")
-async def handle_history(message: Message) -> None:
+async def handle_history(message: Message, state: FSMContext) -> None:
     """Handle History button — show question history (placeholder)."""
-    # TODO: load history from database in Step 12
+    if not await check_authorization(message, state):
+        return
+
+    # TODO: load history from database in Step 13
     await message.answer(
         "📜 <b>Your question history:</b>\n\n"
         "No questions asked yet.",
@@ -108,8 +172,11 @@ async def handle_history(message: Message) -> None:
 
 
 @router.message(F.text == "⚙️ Settings")
-async def handle_settings(message: Message) -> None:
+async def handle_settings(message: Message, state: FSMContext) -> None:
     """Handle Settings button — show settings (placeholder)."""
+    if not await check_authorization(message, state):
+        return
+
     # TODO: implement settings in later steps
     await message.answer(
         "⚙️ <b>Settings</b>\n\n"
@@ -159,11 +226,11 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
 
     question = message.text.strip()
 
-    # TODO: call scraper + Claude in Steps 4-6
+    # TODO: call scraper + Claude in Steps 5-7
     await message.answer(
         f"🔍 Searching on <code>{url}</code>...\n\n"
         f"Question: <i>{question}</i>\n\n"
-        "⏳ This feature will be available after Steps 4-6.",
+        "⏳ This feature will be available after Steps 5-7.",
     )
 
 

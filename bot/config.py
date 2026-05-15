@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     # Telegram
     bot_token: str
+    bot_password: str
 
     # Anthropic
     anthropic_api_key: str
