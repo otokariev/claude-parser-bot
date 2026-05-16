@@ -4,6 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.redis import RedisStorage
 
 from bot.config import settings
 from bot.handlers import router
@@ -22,7 +23,10 @@ async def main() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+
+    # Store FSM state in Redis
+    storage = RedisStorage.from_url(settings.redis_url)
+    dp = Dispatcher(storage=storage)
 
     # Register routers
     dp.include_router(router)

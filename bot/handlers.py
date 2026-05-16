@@ -19,6 +19,7 @@ from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification
 from services.rag import index_site_content, get_relevant_context
+from services.cache import get_cached_content, set_cached_content
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +193,9 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_url)
 async def handle_url_input(message: Message, state: FSMContext) -> None:
-    """Handle URL input from user — validate, scrape and save to state."""
+    """Handle URL input — check cache first, scrape if not cached."""
     url = message.text.strip()
+    user_id = message.from_user.id
 
     # Basic URL validation
     if not url.startswith(("http://", "https://")):
@@ -203,10 +205,25 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Notify user that scraping has started
-    status_message = await message.answer("⏳ Scraping the site, please wait...")
+    # Check cache first
+    cached = await get_cached_content(url=url, user_id=user_id)
 
-    # Scrape the URL
+    if cached:
+        await state.update_data(
+            current_url=url,
+            current_title=cached["title"],
+            current_content=cached["content"],
+        )
+        await state.set_state(BotStates.waiting_for_question)
+        await message.answer(
+            f"⚡ Loaded from cache!\n\n"
+            f"🌐 <b>{cached['title'] or url}</b>\n\n"
+            "Now send me your question about this site!",
+        )
+        return
+
+    # Not cached — scrape the URL
+    status_message = await message.answer("⏳ Scraping the site, please wait...")
     result = scrape_url(url)
 
     if not result.success:
@@ -216,7 +233,15 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Save URL and content to FSM state
+    # Save to cache
+    await set_cached_content(
+        url=url,
+        user_id=user_id,
+        title=result.title,
+        content=result.content,
+    )
+
+    # Save to FSM state
     await state.update_data(
         current_url=url,
         current_title=result.title,
