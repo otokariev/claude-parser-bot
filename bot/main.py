@@ -29,8 +29,11 @@ async def main() -> None:
 
     logger.info("Starting bot...")
 
+    # Skip pending updates on startup
+    await bot.delete_webhook(drop_pending_updates=True)
+
     # Start polling
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
 if __name__ == "__main__":

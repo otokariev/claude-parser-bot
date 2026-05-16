@@ -17,6 +17,8 @@ from bot.keyboards import (
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 
 from services.scraper import scrape_url
+from services.claude import ask_claude, ask_claude_for_clarification
+from services.rag import index_site_content, get_relevant_context
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +236,7 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_question)
 async def handle_question_input(message: Message, state: FSMContext) -> None:
-    """Handle question input from user — placeholder for Claude response."""
+    """Handle question input — scrape, index, search and answer via Claude."""
     data = await state.get_data()
     url = data.get("current_url")
 
@@ -246,13 +248,85 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         return
 
     question = message.text.strip()
+    user_id = message.from_user.id
 
-    # TODO: call scraper + Claude in Steps 5-7
-    await message.answer(
-        f"🔍 Searching on <code>{url}</code>...\n\n"
-        f"Question: <i>{question}</i>\n\n"
-        "⏳ This feature will be available after Steps 5-7.",
+    # Step 1: Check if question needs clarification
+    clarification = ask_claude_for_clarification(question=question, url=url)
+    if clarification:
+        await state.set_state(BotStates.waiting_for_clarification)
+        await state.update_data(pending_question=question)
+        await message.answer(
+            f"🤔 Could you clarify your question?\n\n{clarification}",
+        )
+        return
+
+    # Step 2: Get content from state
+    content = data.get("current_content")
+
+    # Step 3: Index content if not already indexed
+    if content:
+        status_message = await message.answer("🔍 Searching for relevant information...")
+        index_site_content(url=url, user_id=user_id, content=content)
+        await state.update_data(current_content=None)  # clear content from state
+    else:
+        status_message = await message.answer("🔍 Searching for relevant information...")
+
+    # Step 4: Search for relevant chunks
+    context = get_relevant_context(query=question, url=url, user_id=user_id)
+
+    if not context:
+        await status_message.edit_text(
+            "❌ No relevant information found on the site for your question.",
+        )
+        return
+
+    # Step 5: Get answer from Claude
+    await status_message.edit_text("🤖 Claude is thinking...")
+    answer = ask_claude(question=question, context=context, url=url)
+
+    await status_message.edit_text(
+        f"💬 <b>Question:</b> {question}\n\n"
+        f"🤖 <b>Answer:</b>\n{answer}\n\n"
+        f"🌐 <i>Source: {url}</i>",
     )
+
+
+# ── Clarification Input Handler ────────────────────────────────────────────────────
+
+@router.message(BotStates.waiting_for_clarification)
+async def handle_clarification_input(message: Message, state: FSMContext) -> None:
+    """Handle clarification input — combine with original question and answer."""
+    data = await state.get_data()
+    url = data.get("current_url")
+    original_question = data.get("pending_question", "")
+    clarification = message.text.strip()
+    user_id = message.from_user.id
+
+    # Combine original question with clarification
+    refined_question = f"{original_question} — {clarification}"
+
+    status_message = await message.answer("🔍 Searching for relevant information...")
+
+    # Search for relevant chunks
+    context = get_relevant_context(query=refined_question, url=url, user_id=user_id)
+
+    if not context:
+        await status_message.edit_text(
+            "❌ No relevant information found on the site for your question.",
+        )
+        await state.set_state(BotStates.waiting_for_question)
+        return
+
+    # Get answer from Claude
+    await status_message.edit_text("🤖 Claude is thinking...")
+    answer = ask_claude(question=refined_question, context=context, url=url)
+
+    await status_message.edit_text(
+        f"💬 <b>Question:</b> {refined_question}\n\n"
+        f"🤖 <b>Answer:</b>\n{answer}\n\n"
+        f"🌐 <i>Source: {url}</i>",
+    )
+    await state.set_state(BotStates.waiting_for_question)
 
 
 # ── Callback Query Handlers ───────────────────────────────────────────────────
