@@ -17,6 +17,7 @@ from bot.keyboards import (
 )
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
+from db.repository import save_message, get_user_history, clear_user_history
 
 from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification
@@ -34,9 +35,9 @@ router = Router()
 class BotStates(StatesGroup):
     """FSM states for conversation flow."""
 
-    waiting_for_password = State()       # waiting for user to enter password
-    waiting_for_url = State()            # waiting for user to send a URL
-    waiting_for_question = State()       # waiting for user to send a question
+    waiting_for_password = State()  # waiting for user to enter password
+    waiting_for_url = State()  # waiting for user to send a URL
+    waiting_for_question = State()  # waiting for user to send a question
     waiting_for_clarification = State()  # waiting for clarification from user
 
 
@@ -179,15 +180,28 @@ async def handle_ask_question(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == "📜 History")
 async def handle_history(message: Message, state: FSMContext) -> None:
-    """Handle History button — show question history (placeholder)."""
+    """Handle History button — show question history from database."""
     if not await check_authorization(message, state):
         return
 
-    # TODO: load history from database in Step 13
-    await message.answer(
-        "📜 <b>Your question history:</b>\n\n"
-        "No questions asked yet.",
-    )
+    user_id = message.from_user.id
+    messages = await get_user_history(user_id=user_id, limit=10)
+
+    if not messages:
+        await message.answer(
+            "📜 <b>Your question history:</b>\n\n"
+            "No questions asked yet.",
+        )
+        return
+
+    history_text = "📜 <b>Your last questions:</b>\n\n"
+    for msg in messages:
+        if msg.role == "user":
+            history_text += f"❓ <b>Q:</b> {msg.content}\n"
+        else:
+            history_text += f"🤖 <b>A:</b> {msg.content[:200]}...\n\n"
+
+    await message.answer(history_text)
 
 
 @router.message(F.text == "⚙️ Settings")
@@ -370,6 +384,10 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         f"🤖 <b>Answer:</b>\n{answer}\n\n"
         f"🌐 <i>Source: {url}</i>",
     )
+
+    # Save question and answer to history
+    await save_message(user_id=user_id, role="user", content=question)
+    await save_message(user_id=user_id, role="assistant", content=answer)
 
 
 # ── Clarification Input Handler ────────────────────────────────────────────────────

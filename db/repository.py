@@ -130,3 +130,65 @@ async def get_site_by_id(site_id: int, user_id: int) -> SavedSite | None:
             )
         )
         return result.scalar_one_or_none()
+
+
+# ── Message Repository ────────────────────────────────────────────────────────
+
+
+async def save_message(
+        user_id: int,
+        role: str,
+        content: str,
+        session_id: int | None = None,
+) -> Message:
+    """
+    Save a message to history.
+
+    Args:
+        user_id: Telegram user ID
+        role: 'user' or 'assistant'
+        content: Message content
+        session_id: Optional session ID
+    """
+    async with async_session() as session:
+        message = Message(
+            user_id=user_id,
+            role=role,
+            content=content,
+            session_id=session_id,
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        return message
+
+
+async def get_user_history(user_id: int, limit: int = 10) -> list[Message]:
+    """
+    Get last N messages for a user.
+
+    Args:
+        user_id: Telegram user ID
+        limit: Maximum number of messages to return
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Message)
+            .where(Message.user_id == user_id)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(result.scalars().all())
+        return list(reversed(messages))
+
+
+async def clear_user_history(user_id: int) -> None:
+    """Delete all messages for a user."""
+    async with async_session() as session:
+        messages = await session.execute(
+            select(Message).where(Message.user_id == user_id)
+        )
+        for message in messages.scalars().all():
+            await session.delete(message)
+        await session.commit()
+        logger.info(f"Cleared history for user {user_id}")
