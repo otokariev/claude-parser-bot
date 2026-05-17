@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import F, Router
@@ -20,6 +21,7 @@ from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification
 from services.rag import index_site_content, get_relevant_context
 from services.cache import get_cached_content, set_cached_content
+from services.tasks import scrape_and_index_task
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +195,7 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_url)
 async def handle_url_input(message: Message, state: FSMContext) -> None:
-    """Handle URL input — check cache first, scrape if not cached."""
+    """Handle URL input — check cache, then send scraping task to Celery."""
     url = message.text.strip()
     user_id = message.from_user.id
 
@@ -222,39 +224,57 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Not cached — scrape the URL
-    status_message = await message.answer("⏳ Scraping the site, please wait...")
-    result = scrape_url(url)
-
-    if not result.success:
-        await status_message.edit_text(
-            f"❌ Failed to scrape <code>{url}</code>\n\n"
-            f"Error: {result.error}",
-        )
-        return
-
-    # Save to cache
-    await set_cached_content(
-        url=url,
-        user_id=user_id,
-        title=result.title,
-        content=result.content,
-    )
-
-    # Save to FSM state
-    await state.update_data(
-        current_url=url,
-        current_title=result.title,
-        current_content=result.content,
-    )
+    # Send scraping task to Celery worker
+    await state.update_data(current_url=url)
     await state.set_state(BotStates.waiting_for_question)
 
-    await status_message.edit_text(
-        f"✅ Site scraped successfully!\n\n"
-        f"🌐 <b>{result.title or url}</b>\n"
-        f"📄 Content length: {len(result.content)} chars\n\n"
-        "Now send me your question about this site!",
+    status_message = await message.answer(
+        "⏳ Site is being scraped in the background...\n\n"
+        "You will be notified when it's ready. "
+        "You can ask your question now and I will answer once scraping is complete."
     )
+
+    # Run task asynchronously
+    task = scrape_and_index_task.delay(url=url, user_id=user_id)
+
+    # Wait for task result (with timeout)
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: task.get(timeout=30)
+        )
+
+        if not result["success"]:
+            await status_message.edit_text(
+                f"❌ Failed to scrape <code>{url}</code>\n\n"
+                f"Error: {result['error']}",
+            )
+            return
+
+        # Save to cache
+        await set_cached_content(
+            url=url,
+            user_id=user_id,
+            title=result["title"],
+            content=result["content"],
+        )
+
+        # Save content to FSM state
+        await state.update_data(
+            current_title=result["title"],
+            current_content=result["content"],
+        )
+
+        await status_message.edit_text(
+            f"✅ Site scraped successfully!\n\n"
+            f"🌐 <b>{result['title'] or url}</b>\n"
+            f"📄 Chunks indexed: {result['chunks_count']}\n\n"
+            "Now send me your question about this site!",
+        )
+
+    except Exception as e:
+        await status_message.edit_text(
+            f"❌ Scraping timed out or failed: {str(e)}",
+        )
 
 
 # ── Question Input Handler ────────────────────────────────────────────────────
