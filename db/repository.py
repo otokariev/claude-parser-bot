@@ -59,3 +59,74 @@ async def authorize_user(user_id: int) -> None:
         )
         await session.commit()
         logger.info(f"User authorized: {user_id}")
+
+
+# ── SavedSite Repository ──────────────────────────────────────────────────────
+
+async def save_site(user_id: int, url: str, title: str | None = None, summary: str | None = None) -> SavedSite:
+    """Save a new site to user's favourites."""
+    async with async_session() as session:
+        # Check if site already saved
+        result = await session.execute(
+            select(SavedSite).where(
+                SavedSite.user_id == user_id,
+                SavedSite.url == url,
+            )
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            return existing
+
+        site = SavedSite(
+            user_id=user_id,
+            url=url,
+            title=title,
+            summary=summary,
+        )
+        session.add(site)
+        await session.commit()
+        await session.refresh(site)
+        logger.info(f"Saved site {url} for user {user_id}")
+        return site
+
+
+async def get_user_sites(user_id: int) -> list[SavedSite]:
+    """Get all saved sites for a user."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(SavedSite).where(SavedSite.user_id == user_id)
+        )
+        return list(result.scalars().all())
+
+
+async def delete_site(site_id: int, user_id: int) -> bool:
+    """Delete a saved site. Returns True if deleted, False if not found."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(SavedSite).where(
+                SavedSite.id == site_id,
+                SavedSite.user_id == user_id,
+            )
+        )
+        site = result.scalar_one_or_none()
+
+        if not site:
+            return False
+
+        await session.delete(site)
+        await session.commit()
+        logger.info(f"Deleted site {site_id} for user {user_id}")
+        return True
+
+
+async def get_site_by_id(site_id: int, user_id: int) -> SavedSite | None:
+    """Get a saved site by ID."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(SavedSite).where(
+                SavedSite.id == site_id,
+                SavedSite.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()

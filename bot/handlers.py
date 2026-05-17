@@ -16,6 +16,7 @@ from bot.keyboards import (
     sites_keyboard,
 )
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
+from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
 
 from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification
@@ -142,14 +143,24 @@ async def handle_add_url(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == "📋 My Sites")
 async def handle_my_sites(message: Message, state: FSMContext) -> None:
-    """Handle My Sites button — show saved sites (placeholder)."""
+    """Handle My Sites button — show saved sites from database."""
     if not await check_authorization(message, state):
         return
 
-    # TODO: load sites from database in Step 12
+    user_id = message.from_user.id
+    sites = await get_user_sites(user_id)
+
+    if not sites:
+        await message.answer(
+            "📋 <b>Your saved sites:</b>\n\n"
+            "No sites saved yet. Press <b>Add URL</b> to add one!",
+        )
+        return
+
+    sites_list = [{"id": s.id, "title": s.title, "url": s.url} for s in sites]
     await message.answer(
-        "📋 <b>Your saved sites:</b>\n\n"
-        "No sites saved yet. Press <b>Add URL</b> to add one!",
+        "📋 <b>Your saved sites:</b>",
+        reply_markup=sites_keyboard(sites_list),
     )
 
 
@@ -196,7 +207,7 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_url)
 async def handle_url_input(message: Message, state: FSMContext) -> None:
-    """Handle URL input — check cache, then send scraping task to Celery."""
+    """Handle URL input — check cache, scrape and save to favourites."""
     url = message.text.strip()
     user_id = message.from_user.id
 
@@ -224,6 +235,14 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             current_content=cached["content"],
         )
         await state.set_state(BotStates.waiting_for_question)
+
+        # Save site to database even if loaded from cache
+        await save_site(
+            user_id=user_id,
+            url=url,
+            title=cached["title"],
+        )
+
         await message.answer(
             f"⚡ Loaded from cache!\n\n"
             f"🌐 <b>{cached['title'] or url}</b>\n\n"
@@ -237,14 +256,11 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
 
     status_message = await message.answer(
         "⏳ Site is being scraped in the background...\n\n"
-        "You will be notified when it's ready. "
-        "You can ask your question now and I will answer once scraping is complete."
+        "You will be notified when it's ready."
     )
 
-    # Run task asynchronously
     task = scrape_and_index_task.delay(url=url, user_id=user_id)
 
-    # Wait for task result (with timeout)
     try:
         result = await asyncio.get_event_loop().run_in_executor(
             None, lambda: task.get(timeout=30)
@@ -265,6 +281,13 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             content=result["content"],
         )
 
+        # Save site to database
+        await save_site(
+            user_id=user_id,
+            url=url,
+            title=result["title"],
+        )
+
         # Save content to FSM state
         await state.update_data(
             current_title=result["title"],
@@ -272,7 +295,7 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
 
         await status_message.edit_text(
-            f"✅ Site scraped successfully!\n\n"
+            f"✅ Site scraped and saved!\n\n"
             f"🌐 <b>{result['title'] or url}</b>\n"
             f"📄 Chunks indexed: {result['chunks_count']}\n\n"
             "Now send me your question about this site!",
@@ -291,6 +314,7 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
     """Handle question input — scrape, index, search and answer via Claude."""
     data = await state.get_data()
     url = data.get("current_url")
+    user_id = message.from_user.id
 
     if not url:
         await state.set_state(BotStates.waiting_for_url)
@@ -306,7 +330,6 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         return
 
     question = message.text.strip()
-    user_id = message.from_user.id
 
     # Step 1: Check if question needs clarification
     clarification = ask_claude_for_clarification(question=question, url=url)
@@ -402,9 +425,65 @@ async def callback_add_site(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "back_to_sites")
 async def callback_back_to_sites(callback: CallbackQuery) -> None:
     """Handle back to sites callback."""
+    user_id = callback.from_user.id
+    sites = await get_user_sites(user_id)
+    sites_list = [{"id": s.id, "title": s.title, "url": s.url} for s in sites]
+
     await callback.message.answer(
-        "📋 Your saved sites:",
+        "📋 <b>Your saved sites:</b>",
+        reply_markup=sites_keyboard(sites_list),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("site_"))
+async def callback_site_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle site selection from My Sites list."""
+    site_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+
+    site = await get_site_by_id(site_id=site_id, user_id=user_id)
+    if not site:
+        await callback.answer("Site not found.")
+        return
+
+    await state.update_data(current_url=site.url, current_title=site.title)
+    await state.set_state(BotStates.waiting_for_question)
+
+    await callback.message.answer(
+        f"🌐 <b>{site.title or site.url}</b>\n\n"
+        "Send me your question about this site!",
+        reply_markup=site_actions_keyboard(site_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_"))
+async def callback_delete_site(callback: CallbackQuery) -> None:
+    """Handle site deletion."""
+    site_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+
+    await callback.message.answer(
+        "🗑 Are you sure you want to delete this site?",
+        reply_markup=confirm_keyboard(f"delete_{site_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_delete_"))
+async def callback_confirm_delete(callback: CallbackQuery) -> None:
+    """Handle delete confirmation."""
+    site_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+
+    deleted = await delete_site(site_id=site_id, user_id=user_id)
+
+    if deleted:
+        await callback.message.answer("✅ Site deleted successfully!")
+    else:
+        await callback.message.answer("❌ Site not found.")
+
     await callback.answer()
 
 
