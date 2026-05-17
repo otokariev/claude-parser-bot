@@ -22,6 +22,7 @@ from services.claude import ask_claude, ask_claude_for_clarification
 from services.rag import index_site_content, get_relevant_context
 from services.cache import get_cached_content, set_cached_content
 from services.tasks import scrape_and_index_task
+from services.rate_limiter import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,12 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Check rate limit
+    allowed, error_message = await check_rate_limit(user_id)
+    if not allowed:
+        await message.answer(error_message)
+        return
+
     # Check cache first
     cached = await get_cached_content(url=url, user_id=user_id)
 
@@ -290,6 +297,12 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         await message.answer(
             "⚠️ No URL set. Please send a URL first.",
         )
+        return
+
+    # Check rate limit
+    allowed, error_message = await check_rate_limit(user_id)
+    if not allowed:
+        await message.answer(error_message)
         return
 
     question = message.text.strip()
