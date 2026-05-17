@@ -5,6 +5,8 @@ from firecrawl import FirecrawlApp
 
 from bot.config import settings
 
+from services.retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 # Initialize Firecrawl client
@@ -22,6 +24,7 @@ class ScrapeResult:
     error: str | None = None
 
 
+@with_retry(max_attempts=3, min_wait=2, max_wait=20)
 def scrape_url(url: str) -> ScrapeResult:
     """
     Scrape a single URL using Firecrawl.
