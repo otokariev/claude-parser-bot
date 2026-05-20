@@ -24,6 +24,13 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # Fix CUDA fork issue
     worker_pool="solo",
+    # Celery Beat schedule
+    beat_schedule={
+        "check-monitors-every-hour": {
+            "task": "tasks.check_monitors",
+            "schedule": 86400.0,  # every 24 hours
+        },
+    },
 )
 
 # Auto-discover tasks from services/tasks.py

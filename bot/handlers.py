@@ -18,6 +18,7 @@ from bot.keyboards import (
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
 from db.repository import save_message, get_user_history, clear_user_history
+from db.repository import create_monitor, get_monitor_by_site, deactivate_monitor
 
 from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification
@@ -502,6 +503,52 @@ async def callback_confirm_delete(callback: CallbackQuery) -> None:
     else:
         await callback.message.answer("❌ Site not found.")
 
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("monitor_"))
+async def callback_monitor_site(callback: CallbackQuery) -> None:
+    """Handle monitor button — toggle site monitoring."""
+    site_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+
+    # Check if monitor already exists
+    existing_monitor = await get_monitor_by_site(saved_site_id=site_id)
+
+    if existing_monitor:
+        # Deactivate existing monitor
+        await deactivate_monitor(monitor_id=existing_monitor.id)
+        await callback.message.answer(
+            "🔕 Monitoring disabled for this site.",
+        )
+    else:
+        # Create new monitor with default 24h interval
+        await create_monitor(saved_site_id=site_id, interval_hours=24)
+        await callback.message.answer(
+            "🔔 Monitoring enabled!\n\n"
+            "I will check this site every <b>24 hours</b> and notify you if content changes.",
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ask_"))
+async def callback_ask_about_site(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle ask button from site actions keyboard."""
+    site_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+
+    site = await get_site_by_id(site_id=site_id, user_id=user_id)
+    if not site:
+        await callback.answer("Site not found.")
+        return
+
+    await state.update_data(current_url=site.url, current_title=site.title)
+    await state.set_state(BotStates.waiting_for_question)
+
+    await callback.message.answer(
+        f"❓ Ask your question about <b>{site.title or site.url}</b>:",
+    )
     await callback.answer()
 
 

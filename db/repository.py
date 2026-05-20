@@ -192,3 +192,70 @@ async def clear_user_history(user_id: int) -> None:
             await session.delete(message)
         await session.commit()
         logger.info(f"Cleared history for user {user_id}")
+
+
+# ── SiteMonitor Repository ────────────────────────────────────────────────────
+
+async def create_monitor(saved_site_id: int, interval_hours: int = 24) -> SiteMonitor:
+    """Create a new site monitor."""
+    async with async_session() as session:
+        monitor = SiteMonitor(
+            saved_site_id=saved_site_id,
+            interval_hours=interval_hours,
+            is_active=True,
+        )
+        session.add(monitor)
+        await session.commit()
+        await session.refresh(monitor)
+        logger.info(f"Created monitor for site {saved_site_id}")
+        return monitor
+
+
+async def get_active_monitors() -> list[SiteMonitor]:
+    """Get all active site monitors."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(SiteMonitor).where(SiteMonitor.is_active == True)
+        )
+        return list(result.scalars().all())
+
+
+async def update_monitor_check(
+    monitor_id: int,
+    content_hash: str,
+) -> None:
+    """Update monitor's last check time and content hash."""
+    async with async_session() as session:
+        await session.execute(
+            update(SiteMonitor)
+            .where(SiteMonitor.id == monitor_id)
+            .values(
+                last_checked_at=datetime.now(),
+                last_content_hash=content_hash,
+            )
+        )
+        await session.commit()
+
+
+async def deactivate_monitor(monitor_id: int) -> None:
+    """Deactivate a site monitor."""
+    async with async_session() as session:
+        await session.execute(
+            update(SiteMonitor)
+            .where(SiteMonitor.id == monitor_id)
+            .values(is_active=False)
+        )
+        await session.commit()
+        logger.info(f"Deactivated monitor {monitor_id}")
+
+
+async def get_monitor_by_site(saved_site_id: int) -> SiteMonitor | None:
+    """Get monitor for a specific saved site."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(SiteMonitor).where(
+                SiteMonitor.saved_site_id == saved_site_id,
+                SiteMonitor.is_active == True,
+            )
+        )
+        return result.scalar_one_or_none()
