@@ -78,3 +78,23 @@ def back_keyboard() -> InlineKeyboardMarkup:
         ]
     )
     return keyboard
+
+
+def multi_site_keyboard(urls: list[str]) -> InlineKeyboardMarkup:
+    """Inline keyboard showing active URLs in multi-site mode."""
+    buttons = []
+    for i, url in enumerate(urls):
+        short_url = url.replace("https://", "").replace("http://", "")[:30]
+        buttons.append(
+            [InlineKeyboardButton(
+                text=f"❌ {short_url}",
+                callback_data=f"remove_url_{i}",
+            )]
+        )
+    buttons.append(
+        [InlineKeyboardButton(text="➕ Add another URL", callback_data="add_more_url")]
+    )
+    buttons.append(
+        [InlineKeyboardButton(text="✅ Done, ask question", callback_data="done_adding_urls")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

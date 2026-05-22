@@ -14,7 +14,9 @@ from bot.keyboards import (
     main_menu_keyboard,
     site_actions_keyboard,
     sites_keyboard,
+    multi_site_keyboard,
 )
+
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
 from db.repository import save_message, get_user_history, clear_user_history
@@ -38,6 +40,7 @@ class BotStates(StatesGroup):
 
     waiting_for_password = State()  # waiting for user to enter password
     waiting_for_url = State()  # waiting for user to send a URL
+    waiting_for_more_urls = State()  # waiting for additional URLs in multi-site mode
     waiting_for_question = State()  # waiting for user to send a question
     waiting_for_clarification = State()  # waiting for clarification from user
 
@@ -222,7 +225,7 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_url)
 async def handle_url_input(message: Message, state: FSMContext) -> None:
-    """Handle URL input — check cache, scrape and save to favourites."""
+    """Handle URL input — check cache, scrape and optionally add more URLs."""
     url = message.text.strip()
     user_id = message.from_user.id
 
@@ -246,32 +249,27 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
     if cached:
         await state.update_data(
             current_url=url,
+            current_urls=[url],
             current_title=cached["title"],
             current_content=cached["content"],
         )
         await state.set_state(BotStates.waiting_for_question)
 
-        # Save site to database even if loaded from cache
-        await save_site(
-            user_id=user_id,
-            url=url,
-            title=cached["title"],
-        )
+        await save_site(user_id=user_id, url=url, title=cached["title"])
 
         await message.answer(
             f"⚡ Loaded from cache!\n\n"
             f"🌐 <b>{cached['title'] or url}</b>\n\n"
-            "Now send me your question about this site!",
+            "Now send me your question or add more URLs:",
+            reply_markup=multi_site_keyboard([url]),
         )
         return
 
     # Send scraping task to Celery worker
-    await state.update_data(current_url=url)
-    await state.set_state(BotStates.waiting_for_question)
+    await state.update_data(current_url=url, current_urls=[url])
 
     status_message = await message.answer(
-        "⏳ Site is being scraped in the background...\n\n"
-        "You will be notified when it's ready."
+        "⏳ Site is being scraped in the background...",
     )
 
     task = scrape_and_index_task.delay(url=url, user_id=user_id)
@@ -288,7 +286,6 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             )
             return
 
-        # Save to cache
         await set_cached_content(
             url=url,
             user_id=user_id,
@@ -296,14 +293,8 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             content=result["content"],
         )
 
-        # Save site to database
-        await save_site(
-            user_id=user_id,
-            url=url,
-            title=result["title"],
-        )
+        await save_site(user_id=user_id, url=url, title=result["title"])
 
-        # Save content to FSM state
         await state.update_data(
             current_title=result["title"],
             current_content=result["content"],
@@ -313,7 +304,8 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             f"✅ Site scraped and saved!\n\n"
             f"🌐 <b>{result['title'] or url}</b>\n"
             f"📄 Chunks indexed: {result['chunks_count']}\n\n"
-            "Now send me your question about this site!",
+            "Now send me your question or add more URLs:",
+            reply_markup=multi_site_keyboard([url]),
         )
 
     except Exception as e:
@@ -326,12 +318,13 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
 
 @router.message(BotStates.waiting_for_question)
 async def handle_question_input(message: Message, state: FSMContext) -> None:
-    """Handle question input — scrape, index, search and answer via Claude."""
+    """Handle question input — search across single or multiple sites."""
     data = await state.get_data()
     url = data.get("current_url")
+    urls = data.get("current_urls", [])
     user_id = message.from_user.id
 
-    if not url:
+    if not url and not urls:
         await state.set_state(BotStates.waiting_for_url)
         await message.answer(
             "⚠️ No URL set. Please send a URL first.",
@@ -346,8 +339,11 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
 
     question = message.text.strip()
 
-    # Step 1: Check if question needs clarification
-    clarification = ask_claude_for_clarification(question=question, url=url)
+    # Use multi-site mode if multiple URLs
+    active_urls = urls if urls else [url]
+
+    # Check if question needs clarification
+    clarification = ask_claude_for_clarification(question=question, url=active_urls[0])
     if clarification:
         await state.set_state(BotStates.waiting_for_clarification)
         await state.update_data(pending_question=question)
@@ -356,34 +352,38 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Step 2: Get content from state
+    status_message = await message.answer("🔍 Searching for relevant information...")
+
+    # Index content if available in state
     content = data.get("current_content")
-
-    # Step 3: Index content if not already indexed
     if content:
-        status_message = await message.answer("🔍 Searching for relevant information...")
-        index_site_content(url=url, user_id=user_id, content=content)
-        await state.update_data(current_content=None)  # clear content from state
-    else:
-        status_message = await message.answer("🔍 Searching for relevant information...")
+        index_site_content(url=active_urls[0], user_id=user_id, content=content)
+        await state.update_data(current_content=None)
 
-    # Step 4: Search for relevant chunks
-    context = get_relevant_context(query=question, url=url, user_id=user_id)
+    # Search across all URLs
+    all_contexts = []
+    for search_url in active_urls:
+        context = get_relevant_context(query=question, url=search_url, user_id=user_id)
+        if context:
+            all_contexts.append(f"Source: {search_url}\n{context}")
 
-    if not context:
+    if not all_contexts:
         await status_message.edit_text(
-            "❌ No relevant information found on the site for your question.",
+            "❌ No relevant information found on the site(s) for your question.",
         )
         return
 
-    # Step 5: Get answer from Claude
+    # Combine contexts from all sites
+    combined_context = "\n\n===\n\n".join(all_contexts)
+    sources = ", ".join(active_urls)
+
     await status_message.edit_text("🤖 Claude is thinking...")
-    answer = ask_claude(question=question, context=context, url=url)
+    answer = ask_claude(question=question, context=combined_context, url=sources)
 
     await status_message.edit_text(
         f"💬 <b>Question:</b> {question}\n\n"
         f"🤖 <b>Answer:</b>\n{answer}\n\n"
-        f"🌐 <i>Source: {url}</i>",
+        f"🌐 <i>Sources: {sources}</i>",
     )
 
     # Save question and answer to history
@@ -398,6 +398,7 @@ async def handle_clarification_input(message: Message, state: FSMContext) -> Non
     """Handle clarification input — combine with original question and answer."""
     data = await state.get_data()
     url = data.get("current_url")
+    urls = data.get("current_urls", [])
     original_question = data.get("pending_question", "")
     clarification = message.text.strip()
     user_id = message.from_user.id
@@ -405,27 +406,40 @@ async def handle_clarification_input(message: Message, state: FSMContext) -> Non
     # Combine original question with clarification
     refined_question = f"{original_question} — {clarification}"
 
+    # Use multi-site mode if multiple URLs
+    active_urls = urls if urls else [url]
+
     status_message = await message.answer("🔍 Searching for relevant information...")
 
-    # Search for relevant chunks
-    context = get_relevant_context(query=refined_question, url=url, user_id=user_id)
+    # Search across all URLs
+    all_contexts = []
+    for search_url in active_urls:
+        context = get_relevant_context(query=refined_question, url=search_url, user_id=user_id)
+        if context:
+            all_contexts.append(f"Source: {search_url}\n{context}")
 
-    if not context:
+    if not all_contexts:
         await status_message.edit_text(
-            "❌ No relevant information found on the site for your question.",
+            "❌ No relevant information found on the site(s) for your question.",
         )
         await state.set_state(BotStates.waiting_for_question)
         return
 
-    # Get answer from Claude
+    sources = ", ".join(active_urls)
+    combined_context = "\n\n===\n\n".join(all_contexts)
+
     await status_message.edit_text("🤖 Claude is thinking...")
-    answer = ask_claude(question=refined_question, context=context, url=url)
+    answer = ask_claude(question=refined_question, context=combined_context, url=sources)
 
     await status_message.edit_text(
         f"💬 <b>Question:</b> {refined_question}\n\n"
         f"🤖 <b>Answer:</b>\n{answer}\n\n"
-        f"🌐 <i>Source: {url}</i>",
+        f"🌐 <i>Sources: {sources}</i>",
     )
+
+    await save_message(user_id=user_id, role="user", content=refined_question)
+    await save_message(user_id=user_id, role="assistant", content=answer)
+
     await state.set_state(BotStates.waiting_for_question)
 
 
@@ -550,6 +564,113 @@ async def callback_ask_about_site(callback: CallbackQuery, state: FSMContext) ->
         f"❓ Ask your question about <b>{site.title or site.url}</b>:",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "add_more_url")
+async def callback_add_more_url(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle add more URL button in multi-site mode."""
+    await state.set_state(BotStates.waiting_for_more_urls)
+    await callback.message.answer(
+        "🌐 Send me another URL to add:",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("remove_url_"))
+async def callback_remove_url(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle remove URL button in multi-site mode."""
+    index = int(callback.data.split("_")[2])
+    data = await state.get_data()
+    urls = data.get("current_urls", [])
+
+    if index < len(urls):
+        removed = urls.pop(index)
+        await state.update_data(current_urls=urls)
+        await callback.message.answer(
+            f"❌ Removed: <code>{removed}</code>\n\n"
+            f"Active URLs: {len(urls)}",
+            reply_markup=multi_site_keyboard(urls) if urls else None,
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "done_adding_urls")
+async def callback_done_adding_urls(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle done adding URLs — switch to question mode."""
+    data = await state.get_data()
+    urls = data.get("current_urls", [])
+
+    if not urls:
+        await callback.message.answer("⚠️ No URLs added. Please add at least one URL.")
+        await callback.answer()
+        return
+
+    await state.set_state(BotStates.waiting_for_question)
+    await callback.message.answer(
+        f"✅ <b>{len(urls)} sites ready!</b>\n\n"
+        "Now send me your question — I will search across all sites.",
+    )
+    await callback.answer()
+
+
+@router.message(BotStates.waiting_for_more_urls)
+async def handle_more_url_input(message: Message, state: FSMContext) -> None:
+    """Handle additional URL input in multi-site mode."""
+    url = message.text.strip()
+    user_id = message.from_user.id
+
+    if not url.startswith(("http://", "https://")):
+        await message.answer(
+            "❌ Invalid URL. Please send a valid URL starting with "
+            "<code>http://</code> or <code>https://</code>",
+        )
+        return
+
+    data = await state.get_data()
+    urls = data.get("current_urls", [])
+
+    if url in urls:
+        await message.answer("⚠️ This URL is already added.")
+        return
+
+    # Scrape and index new URL
+    status_message = await message.answer(f"⏳ Scraping <code>{url}</code>...")
+    task = scrape_and_index_task.delay(url=url, user_id=user_id)
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: task.get(timeout=30)
+        )
+
+        if not result["success"]:
+            await status_message.edit_text(
+                f"❌ Failed to scrape <code>{url}</code>\n\n"
+                f"Error: {result['error']}",
+            )
+            return
+
+        urls.append(url)
+        await state.update_data(current_urls=urls)
+
+        await set_cached_content(
+            url=url,
+            user_id=user_id,
+            title=result["title"],
+            content=result["content"],
+        )
+
+        await save_site(user_id=user_id, url=url, title=result["title"])
+
+        await status_message.edit_text(
+            f"✅ Added: <b>{result['title'] or url}</b>\n\n"
+            f"Total URLs: {len(urls)}",
+            reply_markup=multi_site_keyboard(urls),
+        )
+
+    except Exception as e:
+        await status_message.edit_text(
+            f"❌ Failed: {str(e)}",
+        )
 
 
 @router.callback_query(F.data == "cancel")
