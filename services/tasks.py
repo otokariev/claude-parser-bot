@@ -4,7 +4,7 @@ import logging
 from services.celery_app import celery_app
 from services.scraper import scrape_url
 from services.rag import index_site_content
-from services.monitor import check_site_for_changes
+from services.claude import generate_site_summary
 
 from db.repository import get_active_monitors, update_monitor_check
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @celery_app.task(bind=True, name="tasks.scrape_and_index")
 def scrape_and_index_task(self, url: str, user_id: int) -> dict:
     """
-    Celery task: scrape URL and index content to Qdrant.
+    Celery task: scrape URL, generate summary and index content to Qdrant.
     Runs in background worker, not in the main bot process.
 
     Args:
@@ -23,7 +23,7 @@ def scrape_and_index_task(self, url: str, user_id: int) -> dict:
         user_id: Telegram user ID for filtering in Qdrant
 
     Returns:
-        dict with success status, title and content length
+        dict with success status, title, summary and content length
     """
     try:
         logger.info(f"Task started: scraping {url} for user {user_id}")
@@ -39,6 +39,9 @@ def scrape_and_index_task(self, url: str, user_id: int) -> dict:
                 "url": url,
             }
 
+        # Generate site summary
+        summary = generate_site_summary(content=result.content, url=url)
+
         # Index content to Qdrant
         chunks_count = index_site_content(
             url=url,
@@ -52,13 +55,13 @@ def scrape_and_index_task(self, url: str, user_id: int) -> dict:
             "success": True,
             "url": url,
             "title": result.title,
+            "summary": summary,
             "content": result.content,
             "chunks_count": chunks_count,
         }
 
     except Exception as e:
         logger.error(f"Task failed for {url}: {e}")
-        # Retry task up to 3 times with 5 seconds delay
         raise self.retry(exc=e, countdown=5, max_retries=3)
 
 

@@ -23,7 +23,7 @@ from db.repository import save_message, get_user_history, clear_user_history
 from db.repository import create_monitor, get_monitor_by_site, deactivate_monitor
 
 from services.scraper import scrape_url
-from services.claude import ask_claude, ask_claude_for_clarification
+from services.claude import ask_claude, ask_claude_for_clarification, generate_site_summary
 from services.rag import index_site_content, get_relevant_context
 from services.cache import get_cached_content, set_cached_content
 from services.tasks import scrape_and_index_task
@@ -293,17 +293,25 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
             content=result["content"],
         )
 
-        await save_site(user_id=user_id, url=url, title=result["title"])
+        await save_site(
+            user_id=user_id,
+            url=url,
+            title=result["title"],
+            summary=result.get("summary"),
+        )
 
         await state.update_data(
             current_title=result["title"],
             current_content=result["content"],
         )
 
+        summary_text = f"\n\n📝 <b>Summary:</b>\n{result['summary']}" if result.get("summary") else ""
+
         await status_message.edit_text(
             f"✅ Site scraped and saved!\n\n"
             f"🌐 <b>{result['title'] or url}</b>\n"
-            f"📄 Chunks indexed: {result['chunks_count']}\n\n"
+            f"📄 Chunks indexed: {result['chunks_count']}"
+            f"{summary_text}\n\n"
             "Now send me your question or add more URLs:",
             reply_markup=multi_site_keyboard([url]),
         )

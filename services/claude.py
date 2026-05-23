@@ -105,3 +105,39 @@ Respond with either the clarifying question or "CLEAR"."""
     except Exception as e:
         logger.error(f"Claude clarification error: {e}")
         return ""
+
+
+def generate_site_summary(content: str, url: str) -> str:
+    """
+    Generate a brief summary of the website content.
+
+    Args:
+        content: Website content as string
+        url: Source URL for reference
+
+    Returns:
+        Brief summary string
+    """
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=300,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Analyze this website content and provide a brief summary in 2-3 sentences.
+
+Website URL: {url}
+Content: {content[:3000]}
+
+Respond in the same language as the website content.
+Use only these HTML tags supported by Telegram: <b>bold</b>, <i>italic</i>, <code>code</code>.
+Do not use <p>, <h1>, <h2>, <div> or any other HTML tags.
+Do not use Markdown."""
+                }
+            ],
+        )
+        return response.content[0].text
+    except Exception as e:
+        logger.error(f"Summary generation error: {e}")
+        return ""
