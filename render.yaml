@@ -1,0 +1,54 @@
+services:
+  - type: worker
+    name: claude-parser-bot
+    runtime: python
+    buildCommand: pip install uv && uv sync
+    startCommand: uv run python -m bot.main
+    envVars:
+      - key: PYTHONPATH
+        value: .
+      - key: BOT_TOKEN
+        fromGroup: claude-parser-bot
+      - key: BOT_PASSWORD
+        fromGroup: claude-parser-bot
+      - key: ANTHROPIC_API_KEY
+        fromGroup: claude-parser-bot
+      - key: FIRECRAWL_API_KEY
+        fromGroup: claude-parser-bot
+      - key: DATABASE_URL
+        fromGroup: claude-parser-bot
+      - key: REDIS_URL
+        fromGroup: claude-parser-bot
+      - key: QDRANT_HOST
+        fromGroup: claude-parser-bot
+      - key: QDRANT_PORT
+        fromGroup: claude-parser-bot
+      - key: QDRANT_API_KEY
+        fromGroup: claude-parser-bot
+
+  - type: worker
+    name: claude-parser-celery
+    runtime: python
+    buildCommand: pip install uv && uv sync
+    startCommand: PYTHONPATH=. uv run celery -A services.celery_app worker --loglevel=info
+    envVars:
+      - key: PYTHONPATH
+        value: .
+      - key: BOT_TOKEN
+        fromGroup: claude-parser-bot
+      - key: BOT_PASSWORD
+        fromGroup: claude-parser-bot
+      - key: ANTHROPIC_API_KEY
+        fromGroup: claude-parser-bot
+      - key: FIRECRAWL_API_KEY
+        fromGroup: claude-parser-bot
+      - key: DATABASE_URL
+        fromGroup: claude-parser-bot
+      - key: REDIS_URL
+        fromGroup: claude-parser-bot
+      - key: QDRANT_HOST
+        fromGroup: claude-parser-bot
+      - key: QDRANT_PORT
+        fromGroup: claude-parser-bot
+      - key: QDRANT_API_KEY
+        fromGroup: claude-parser-bot

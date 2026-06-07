@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 CACHE_TTL = 3600
 
 # Initialize async Redis client
-redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+redis_client = aioredis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    ssl_cert_reqs=None,
+)
 
 
 async def get_cached_content(url: str, user_id: int) -> dict | None:

@@ -7,7 +7,11 @@ from bot.config import settings
 logger = logging.getLogger(__name__)
 
 # Initialize async Redis client
-redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+redis_client = aioredis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    ssl_cert_reqs=None,
+)
 
 # Rate limit settings
 MAX_REQUESTS_PER_MINUTE = 10  # max requests per user per minute

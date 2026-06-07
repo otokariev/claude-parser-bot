@@ -9,8 +9,15 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
+# SSL settings for Upstash Redis (rediss://)
+redis_ssl_config = {
+    "ssl_cert_reqs": "none",
+}
+
 # Celery configuration
 celery_app.conf.update(
+    broker_use_ssl=redis_ssl_config,
+    redis_backend_use_ssl=redis_ssl_config,
     # Task serialization
     task_serializer="json",
     result_serializer="json",
@@ -26,9 +33,9 @@ celery_app.conf.update(
     worker_pool="solo",
     # Celery Beat schedule
     beat_schedule={
-        "check-monitors-every-hour": {
+        "check-monitors-every-day": {
             "task": "tasks.check_monitors",
-            "schedule": 86400.0,  # every 24 hours
+            "schedule": 86400.0,
         },
     },
 )

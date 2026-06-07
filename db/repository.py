@@ -7,10 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from bot.config import settings
 from db.models import Message, SavedSite, Session, SiteMonitor, User
 
+import ssl
+
 logger = logging.getLogger(__name__)
 
+# Create SSL context for Neon cloud database
+ssl_context = ssl.create_default_context()
+
 # Create async engine and session factory
-engine = create_async_engine(settings.database_url, echo=False)
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    connect_args={"ssl": ssl_context},
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 

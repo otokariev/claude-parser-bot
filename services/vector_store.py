@@ -10,7 +10,12 @@ from bot.config import settings
 logger = logging.getLogger(__name__)
 
 # Initialize Qdrant client
-qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+qdrant = QdrantClient(
+    host=settings.qdrant_host,
+    port=settings.qdrant_port,
+    api_key=settings.qdrant_api_key if settings.qdrant_api_key else None,
+    https=True if settings.qdrant_api_key else False,
+)
 
 # Initialize sentence transformer model for embeddings
 # This model runs locally — no API key needed
