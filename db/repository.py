@@ -259,3 +259,57 @@ async def get_monitor_by_site(saved_site_id: int) -> SiteMonitor | None:
             )
         )
         return result.scalar_one_or_none()
+
+
+# ── Admin Repository ──────────────────────────────────────────────────────────
+
+async def get_all_users() -> list[User]:
+    """Get all registered users."""
+    async with async_session() as session:
+        result = await session.execute(select(User))
+        return list(result.scalars().all())
+
+
+async def set_user_role(user_id: int, role: str) -> None:
+    """Set user role — 'user' or 'admin'."""
+    async with async_session() as session:
+        await session.execute(
+            update(User).where(User.id == user_id).values(role=role)
+        )
+        await session.commit()
+        logger.info(f"Set role {role} for user {user_id}")
+
+
+async def get_stats() -> dict:
+    """Get bot usage statistics for admin."""
+    async with async_session() as session:
+        # Total users
+        users_result = await session.execute(select(User))
+        users = list(users_result.scalars().all())
+        total_users = len(users)
+        active_users = len([u for u in users if u.is_active])
+
+        # Total messages
+        messages_result = await session.execute(select(Message))
+        messages = list(messages_result.scalars().all())
+        total_messages = len(messages)
+        user_messages = len([m for m in messages if m.role == "user"])
+
+        # Total saved sites
+        sites_result = await session.execute(select(SavedSite))
+        total_sites = len(list(sites_result.scalars().all()))
+
+        # Total monitors
+        monitors_result = await session.execute(
+            select(SiteMonitor).where(SiteMonitor.is_active == True)
+        )
+        total_monitors = len(list(monitors_result.scalars().all()))
+
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "total_messages": total_messages,
+            "user_questions": user_messages,
+            "total_saved_sites": total_sites,
+            "active_monitors": total_monitors,
+        }

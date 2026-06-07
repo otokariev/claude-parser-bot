@@ -21,6 +21,7 @@ from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
 from db.repository import save_message, get_user_history, clear_user_history
 from db.repository import create_monitor, get_monitor_by_site, deactivate_monitor
+from db.repository import get_all_users, set_user_role
 
 from services.scraper import scrape_url
 from services.claude import ask_claude, ask_claude_for_clarification, generate_site_summary
@@ -28,6 +29,8 @@ from services.rag import index_site_content, get_relevant_context
 from services.cache import get_cached_content, set_cached_content
 from services.tasks import scrape_and_index_task
 from services.rate_limiter import check_rate_limit
+
+from admin.stats import get_admin_stats_text, promote_user_to_admin
 
 logger = logging.getLogger(__name__)
 
@@ -679,6 +682,105 @@ async def handle_more_url_input(message: Message, state: FSMContext) -> None:
         await status_message.edit_text(
             f"❌ Failed: {str(e)}",
         )
+
+        
+# ── Admin Handlers ────────────────────────────────────────────────────────────
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message, state: FSMContext) -> None:
+    """Handle /admin command — show admin panel (admin only)."""
+    user = await get_or_create_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    if user.role != "admin":
+        await message.answer("❌ Access denied.")
+        return
+
+    stats_text = await get_admin_stats_text()
+    await message.answer(
+        f"👑 <b>Admin Panel</b>\n\n{stats_text}\n\n"
+        "Commands:\n"
+        "/promote [user_id] — promote user to admin\n"
+        "/demote [user_id] — demote admin to user\n"
+        "/users — list all users",
+    )
+
+
+@router.message(Command("promote"))
+async def cmd_promote(message: Message) -> None:
+    """Handle /promote command — promote user to admin (admin only)."""
+    user = await get_or_create_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    if user.role != "admin":
+        await message.answer("❌ Access denied.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Usage: /promote [user_id]")
+        return
+
+    target_id = int(args[1])
+    await promote_user_to_admin(user_id=target_id)
+    await message.answer(f"✅ User {target_id} promoted to admin.")
+
+
+@router.message(Command("demote"))
+async def cmd_demote(message: Message) -> None:
+    """Handle /demote command — demote admin to user (admin only)."""
+    user = await get_or_create_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    if user.role != "admin":
+        await message.answer("❌ Access denied.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Usage: /demote [user_id]")
+        return
+
+    target_id = int(args[1])
+    await set_user_role(user_id=target_id, role="user")
+    await message.answer(f"✅ User {target_id} demoted to regular user.")
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message) -> None:
+    """Handle /users command — list all users (admin only)."""
+    user = await get_or_create_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    if user.role != "admin":
+        await message.answer("❌ Access denied.")
+        return
+
+    users = await get_all_users()
+
+    if not users:
+        await message.answer("No users found.")
+        return
+
+    users_text = "👥 <b>All users:</b>\n\n"
+    for u in users:
+        status = "✅" if u.is_active else "❌"
+        role_icon = "👑" if u.role == "admin" else "👤"
+        users_text += f"{status} {role_icon} <b>{u.full_name}</b> (@{u.username}) — ID: <code>{u.id}</code>\n"
+
+    await message.answer(users_text)
 
 
 @router.callback_query(F.data == "cancel")
