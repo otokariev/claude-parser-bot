@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str
 
+    # Webhook
+    webhook_url: str = ""
+
     # Qdrant
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
