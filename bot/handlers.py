@@ -5,26 +5,26 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 
 from bot.config import settings
 from bot.keyboards import (
-    back_keyboard,
     confirm_keyboard,
     main_menu_keyboard,
     site_actions_keyboard,
     sites_keyboard,
     multi_site_keyboard,
+    subscribe_keyboard,
 )
 
 from db.repository import authorize_user, get_or_create_user, is_user_authorized
 from db.repository import save_site, get_user_sites, delete_site, get_site_by_id
-from db.repository import save_message, get_user_history, clear_user_history
+from db.repository import save_message, get_user_history
 from db.repository import create_monitor, get_monitor_by_site, deactivate_monitor
 from db.repository import get_all_users, set_user_role
+from db.repository import get_user_subscription, activate_pro_subscription, check_subscription_expiry
 
-from services.scraper import scrape_url
-from services.claude import ask_claude, ask_claude_for_clarification, generate_site_summary
+from services.claude import ask_claude, ask_claude_for_clarification
 from services.rag import index_site_content, get_relevant_context
 from services.cache import get_cached_content, set_cached_content
 from services.tasks import scrape_and_index_task
@@ -241,7 +241,9 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         return
 
     # Check rate limit
-    allowed, error_message = await check_rate_limit(user_id)
+    subscription = await get_user_subscription(user_id)
+    await check_subscription_expiry(user_id)
+    allowed, error_message = await check_rate_limit(user_id, subscription=subscription)
     if not allowed:
         await message.answer(error_message)
         return
@@ -327,9 +329,10 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
 
 # ── Question Input Handler ────────────────────────────────────────────────────
 
-@router.message(BotStates.waiting_for_question)
+@router.message(BotStates.waiting_for_question, F.text.regexp(r"^(?!\/).*"))
 async def handle_question_input(message: Message, state: FSMContext) -> None:
     """Handle question input — search across single or multiple sites."""
+
     data = await state.get_data()
     url = data.get("current_url")
     urls = data.get("current_urls", [])
@@ -343,7 +346,9 @@ async def handle_question_input(message: Message, state: FSMContext) -> None:
         return
 
     # Check rate limit
-    allowed, error_message = await check_rate_limit(user_id)
+    subscription = await get_user_subscription(user_id)
+    await check_subscription_expiry(user_id)
+    allowed, error_message = await check_rate_limit(user_id, subscription=subscription)
     if not allowed:
         await message.answer(error_message)
         return
@@ -781,6 +786,62 @@ async def cmd_users(message: Message) -> None:
         users_text += f"{status} {role_icon} <b>{u.full_name}</b> (@{u.username}) — ID: <code>{u.id}</code>\n"
 
     await message.answer(users_text)
+
+
+@router.message(Command("subscribe"))
+async def cmd_subscribe(message: Message) -> None:
+    """Handle /subscribe command — show subscription options."""
+    user_id = message.from_user.id
+    subscription = await get_user_subscription(user_id)
+
+    if subscription == "pro":
+        is_active = await check_subscription_expiry(user_id)
+        if is_active:
+            await message.answer(
+                "✅ You already have <b>Pro</b> subscription!\n\n"
+                "Enjoy unlimited requests.",
+            )
+            return
+
+    await message.answer(
+        "⭐ <b>Upgrade to Pro</b>\n\n"
+        "Free plan: <b>2 requests/day</b>\n"
+        "Pro plan: <b>Unlimited requests</b>\n\n"
+        "Price: <b>50 Telegram Stars</b> / month\n\n"
+        "Press the button below to subscribe:",
+        reply_markup=subscribe_keyboard()
+    )
+
+
+@router.callback_query(F.data == "pay_stars")
+async def callback_pay_stars(callback: CallbackQuery) -> None:
+    """Handle pay stars button — send invoice."""
+    await callback.message.answer_invoice(
+        title="Pro Subscription",
+        description="Unlimited requests for 30 days",
+        payload="pro_subscription_30days",
+        currency="XTR",  # Telegram Stars currency code
+        prices=[LabeledPrice(label="Pro Subscription", amount=50)],
+    )
+    await callback.answer()
+
+
+@router.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery) -> None:
+    """Handle pre-checkout query — always approve."""
+    await pre_checkout_query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def successful_payment_handler(message: Message) -> None:
+    """Handle successful payment — activate Pro subscription."""
+    user_id = message.from_user.id
+    await activate_pro_subscription(user_id=user_id, days=30)
+    await message.answer(
+        "🎉 <b>Payment successful!</b>\n\n"
+        "Your <b>Pro</b> subscription is now active for <b>30 days</b>.\n\n"
+        "Enjoy unlimited requests!",
+    )
 
 
 @router.callback_query(F.data == "cancel")

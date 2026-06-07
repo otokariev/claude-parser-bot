@@ -31,6 +31,8 @@ class User(Base):
     daily_requests: Mapped[int] = mapped_column(Integer, default=0)
     last_request_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    subscription: Mapped[str] = mapped_column(String(16), default="free")  # "free" or "pro"
+    subscription_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     sessions: Mapped[list["Session"]] = relationship(back_populates="user")
     saved_sites: Mapped[list["SavedSite"]] = relationship(back_populates="user")

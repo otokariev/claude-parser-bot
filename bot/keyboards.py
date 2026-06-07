@@ -98,3 +98,10 @@ def multi_site_keyboard(urls: list[str]) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✅ Done, ask question", callback_data="done_adding_urls")]
     )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def subscribe_keyboard() -> InlineKeyboardMarkup:
+    """Inline keyboard for subscription payment."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Pay 50 Stars", callback_data="pay_stars")]
+    ])

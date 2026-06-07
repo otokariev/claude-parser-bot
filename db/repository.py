@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -15,7 +15,6 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 # ── User Repository ───────────────────────────────────────────────────────────
-
 
 async def get_or_create_user(
     user_id: int,
@@ -133,7 +132,6 @@ async def get_site_by_id(site_id: int, user_id: int) -> SavedSite | None:
 
 
 # ── Message Repository ────────────────────────────────────────────────────────
-
 
 async def save_message(
         user_id: int,
@@ -313,3 +311,71 @@ async def get_stats() -> dict:
             "total_saved_sites": total_sites,
             "active_monitors": total_monitors,
         }
+
+
+# ── Subscription Repository ───────────────────────────────────────────────────
+
+async def get_user_subscription(user_id: int) -> str:
+    """Get user subscription type — 'free' or 'pro'."""
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        return user.subscription if user else "free"
+
+
+async def activate_pro_subscription(user_id: int, days: int = 30) -> None:
+    """
+    Activate Pro subscription for a user.
+
+    Args:
+        user_id: Telegram user ID
+        days: Number of days to activate subscription for
+    """
+    until = datetime.now() + timedelta(days=days)
+    async with async_session() as session:
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(subscription="pro", subscription_until=until)
+        )
+        await session.commit()
+        logger.info(f"Activated Pro subscription for user {user_id} until {until}")
+
+
+async def deactivate_pro_subscription(user_id: int) -> None:
+    """Deactivate Pro subscription for a user."""
+    async with async_session() as session:
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(subscription="free", subscription_until=None)
+        )
+        await session.commit()
+        logger.info(f"Deactivated Pro subscription for user {user_id}")
+
+
+async def check_subscription_expiry(user_id: int) -> bool:
+    """
+    Check if Pro subscription has expired and downgrade if needed.
+
+    Returns:
+        True if subscription is still active, False if expired
+    """
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+
+        if not user or user.subscription == "free":
+            return False
+
+        if user.subscription_until and user.subscription_until < datetime.now():
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(subscription="free", subscription_until=None)
+            )
+            await session.commit()
+            logger.info(f"Pro subscription expired for user {user_id}")
+            return False
+
+        return True
