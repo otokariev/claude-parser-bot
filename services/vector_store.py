@@ -19,7 +19,8 @@ qdrant = QdrantClient(
 
 # Initialize sentence transformer model for embeddings
 # This model runs locally — no API key needed
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model = SentenceTransformer("paraphrase-MiniLM-L3-v2")  # 17MB
+# model = SentenceTransformer("all-MiniLM-L6-v2")  # 90MB
 
 COLLECTION_NAME = "site_chunks"
 VECTOR_SIZE = 384  # all-MiniLM-L6-v2 output size
