@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -17,6 +18,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def start_celery_worker():
+    """Start Celery worker in a separate thread."""
+    from services.celery_app import celery_app
+    worker = celery_app.Worker(loglevel="info")
+    worker.start()
+
+
 async def main() -> None:
     """Initialize and start the bot."""
     bot = Bot(
@@ -30,6 +38,11 @@ async def main() -> None:
 
     # Register routers
     dp.include_router(router)
+
+    # Start Celery worker in background thread
+    celery_thread = threading.Thread(target=start_celery_worker, daemon=True)
+    celery_thread.start()
+    logger.info("Celery worker started in background thread")
 
     logger.info("Starting bot...")
 

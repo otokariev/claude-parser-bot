@@ -1,16 +1,8 @@
 services:
-  - type: worker
+  - type: web
     name: claude-parser-bot
     runtime: python
     buildCommand: pip install uv && uv sync
     startCommand: uv run python -m bot.main
-    envVars:
-      - fromGroup: claude-parser-bot
-
-  - type: worker
-    name: claude-parser-celery
-    runtime: python
-    buildCommand: pip install uv && uv sync
-    startCommand: PYTHONPATH=. uv run celery -A services.celery_app worker --loglevel=info
     envVars:
       - fromGroup: claude-parser-bot
