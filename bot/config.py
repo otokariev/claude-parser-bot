@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str
 
+    # Voyage
+    voyage_api_key: str = ""
+
     # Webhook
     webhook_url: str = ""
 

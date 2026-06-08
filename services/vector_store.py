@@ -1,9 +1,9 @@
 import logging
 import uuid
 
+import voyageai
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, Filter, FieldCondition, MatchValue, PointStruct, VectorParams
-from sentence_transformers import SentenceTransformer
 
 from bot.config import settings
 
@@ -17,13 +17,21 @@ qdrant = QdrantClient(
     https=True if settings.qdrant_api_key else False,
 )
 
-# Initialize sentence transformer model for embeddings
-# This model runs locally — no API key needed
-model = SentenceTransformer("paraphrase-MiniLM-L3-v2")  # 17MB
-# model = SentenceTransformer("all-MiniLM-L6-v2")  # 90MB
+# Initialize Voyage AI client for embeddings
+voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
 
 COLLECTION_NAME = "site_chunks"
-VECTOR_SIZE = 384  # all-MiniLM-L6-v2 output size
+VECTOR_SIZE = 1024  # voyage-multilingual-2 output size
+EMBEDDING_MODEL = "voyage-multilingual-2"
+
+
+def embed_text(text: str) -> list[float]:
+    """Convert text to embedding vector using Voyage AI API."""
+    response = voyage_client.embed(
+        texts=[text],
+        model=EMBEDDING_MODEL,
+    )
+    return response.embeddings[0]
 
 
 def ensure_collection_exists() -> None:
@@ -42,11 +50,6 @@ def ensure_collection_exists() -> None:
         logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
 
 
-def embed_text(text: str) -> list[float]:
-    """Convert text to embedding vector."""
-    return model.encode(text).tolist()
-
-
 def save_chunks(url: str, user_id: int, chunks: list[str]) -> None:
     """
     Save text chunks to Qdrant with their embeddings.
@@ -58,7 +61,7 @@ def save_chunks(url: str, user_id: int, chunks: list[str]) -> None:
     for chunk in chunks:
         vector = embed_text(chunk)
         point = PointStruct(
-            id=str(uuid.uuid4().hex),
+            id=uuid.uuid4().hex,
             vector=vector,
             payload={
                 "url": url,
