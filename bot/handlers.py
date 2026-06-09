@@ -226,7 +226,7 @@ async def handle_settings(message: Message, state: FSMContext) -> None:
 
 # ── URL Input Handler ─────────────────────────────────────────────────────────
 
-@router.message(BotStates.waiting_for_url)
+@router.message(BotStates.waiting_for_url, F.text.regexp(r"^(?!\/).*"))
 async def handle_url_input(message: Message, state: FSMContext) -> None:
     """Handle URL input — check cache, scrape and optionally add more URLs."""
     url = message.text.strip()
