@@ -277,11 +277,9 @@ async def handle_url_input(message: Message, state: FSMContext) -> None:
         "⏳ Site is being scraped in the background...",
     )
 
-    task = scrape_and_index_task.delay(url=url, user_id=user_id)
-
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: task.get(timeout=30)
+            None, lambda: scrape_and_index_task(url=url, user_id=user_id)
         )
 
         if not result["success"]:
@@ -651,11 +649,10 @@ async def handle_more_url_input(message: Message, state: FSMContext) -> None:
 
     # Scrape and index new URL
     status_message = await message.answer(f"⏳ Scraping <code>{url}</code>...")
-    task = scrape_and_index_task.delay(url=url, user_id=user_id)
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: task.get(timeout=30)
+            None, lambda: scrape_and_index_task(url=url, user_id=user_id)
         )
 
         if not result["success"]:
