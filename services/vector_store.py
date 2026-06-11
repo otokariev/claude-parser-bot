@@ -17,12 +17,6 @@ qdrant = QdrantClient(
     https=True if settings.qdrant_api_key else False,
 )
 
-# Test VOYAGE API KEY
-import os
-
-print("VOYAGE_API_KEY exists:", bool(os.getenv("VOYAGE_API_KEY")))
-print("Length:", len(os.getenv("VOYAGE_API_KEY", "")))
-
 # Initialize Voyage AI client for embeddings
 voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
 
