@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     redis_url: str
 
     # Voyage
-    voyage_api_key: str
-    # voyage_api_key: str = # FIXME!
+    # voyage_api_key: str
+    voyage_api_key: str = ""
 
     # Webhook
     webhook_url: str = ""
@@ -39,6 +39,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-assert settings.voyage_api_key, "VOYAGE_API_KEY is missing"
-
-print("VOYAGE KEY LOADED:", settings.voyage_api_key[:10])
+# assert settings.voyage_api_key, "VOYAGE_API_KEY is missing"
+#
+# print("VOYAGE KEY LOADED:", settings.voyage_api_key[:10])
