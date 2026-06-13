@@ -54,7 +54,7 @@ def ensure_collection_exists() -> None:
         qdrant.create_payload_index(
             collection_name=COLLECTION_NAME,
             field_name="user_id",
-            field_schema="keyword",
+            field_schema="integer",
         )
         logger.info(f"Created payload indexes for {COLLECTION_NAME}")
 
