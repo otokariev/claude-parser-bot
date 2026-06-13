@@ -31,7 +31,7 @@ def embed_text(text: str) -> list[float]:
 
 
 def ensure_collection_exists() -> None:
-    """Create Qdrant collection if it doesn't exist."""
+    """Create Qdrant collection if it doesn't exist, with indexes for filtering."""
     collections = qdrant.get_collections().collections
     names = [c.name for c in collections]
 
@@ -44,6 +44,19 @@ def ensure_collection_exists() -> None:
             ),
         )
         logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
+
+        # Create indexes for filtering by url and user_id
+        qdrant.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="url",
+            field_schema="keyword",
+        )
+        qdrant.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="user_id",
+            field_schema="keyword",
+        )
+        logger.info(f"Created payload indexes for {COLLECTION_NAME}")
 
 
 def save_chunks(url: str, user_id: int, chunks: list[str]) -> None:
