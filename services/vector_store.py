@@ -1,9 +1,9 @@
 import logging
 import uuid
 
-import voyageai
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, Filter, FieldCondition, MatchValue, PointStruct, VectorParams
+from sentence_transformers import SentenceTransformer
 
 from bot.config import settings
 
@@ -17,21 +17,17 @@ qdrant = QdrantClient(
     https=True if settings.qdrant_api_key else False,
 )
 
-# Initialize Voyage AI client for embeddings
-voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
+# Initialize sentence transformer model for embeddings
+# This model runs locally — no API key needed
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 COLLECTION_NAME = "site_chunks"
-VECTOR_SIZE = 1024  # voyage-multilingual-2 output size
-EMBEDDING_MODEL = "voyage-multilingual-2"
+VECTOR_SIZE = 384  # all-MiniLM-L6-v2 output size
 
 
 def embed_text(text: str) -> list[float]:
-    """Convert text to embedding vector using Voyage AI API."""
-    response = voyage_client.embed(
-        texts=[text],
-        model=EMBEDDING_MODEL,
-    )
-    return response.embeddings[0]
+    """Convert text to embedding vector."""
+    return model.encode(text).tolist()
 
 
 def ensure_collection_exists() -> None:
