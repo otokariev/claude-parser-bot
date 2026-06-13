@@ -3,7 +3,7 @@ import uuid
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, Filter, FieldCondition, MatchValue, PointStruct, VectorParams
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 from bot.config import settings
 
@@ -19,7 +19,7 @@ qdrant = QdrantClient(
 
 # Initialize sentence transformer model for embeddings
 # This model runs locally — no API key needed
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
 COLLECTION_NAME = "site_chunks"
 VECTOR_SIZE = 384  # all-MiniLM-L6-v2 output size
@@ -27,7 +27,7 @@ VECTOR_SIZE = 384  # all-MiniLM-L6-v2 output size
 
 def embed_text(text: str) -> list[float]:
     """Convert text to embedding vector."""
-    return model.encode(text).tolist()
+    return list(model.embed([text]))[0].tolist()
 
 
 def ensure_collection_exists() -> None:
